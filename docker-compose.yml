@@ -1,0 +1,186 @@
+version: '3.8'
+
+services:
+  # Infrastructure
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nepse_user
+      POSTGRES_PASSWORD: change_me_in_production
+      POSTGRES_DB: nepse_analytics
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./db/seed/sample_data.sql:/docker-entrypoint-initdb.d/02-seed.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nepse_user -d nepse_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend Services
+  api-gateway:
+    build: ./services/api-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      - API_GATEWAY_PORT=3000
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=nepse_user
+      - POSTGRES_PASSWORD=change_me_in_production
+      - POSTGRES_DB=nepse_analytics
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=nepse_analytics_jwt_secret_change_in_production
+      - MARKET_DATA_URL=http://market-data:3001
+      - TECHNICAL_ANALYSIS_URL=http://technical-analysis:3002
+      - SIGNAL_ENGINE_URL=http://signal-engine:3003
+      - PORTFOLIO_URL=http://portfolio:3004
+      - NOTIFICATION_URL=http://notification:3005
+      - AI_PREDICTION_URL=http://ai-prediction:8000
+      - NEWS_SENTIMENT_URL=http://news-sentiment:8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  market-data:
+    build: ./services/market-data
+    ports:
+      - "3001:3001"
+    environment:
+      - MARKET_DATA_PORT=3001
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=nepse_user
+      - POSTGRES_PASSWORD=change_me_in_production
+      - POSTGRES_DB=nepse_analytics
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  technical-analysis:
+    build: ./services/technical-analysis
+    ports:
+      - "3002:3002"
+    environment:
+      - TECHNICAL_ANALYSIS_PORT=3002
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=nepse_user
+      - POSTGRES_PASSWORD=change_me_in_production
+      - POSTGRES_DB=nepse_analytics
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  signal-engine:
+    build: ./services/signal-engine
+    ports:
+      - "3003:3003"
+    environment:
+      - SIGNAL_ENGINE_PORT=3003
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=nepse_user
+      - POSTGRES_PASSWORD=change_me_in_production
+      - POSTGRES_DB=nepse_analytics
+      - TECHNICAL_ANALYSIS_URL=http://technical-analysis:3002
+      - MARKET_DATA_URL=http://market-data:3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      technical-analysis:
+        condition: service_started
+
+  portfolio:
+    build: ./services/portfolio
+    ports:
+      - "3004:3004"
+    environment:
+      - PORTFOLIO_PORT=3004
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=nepse_user
+      - POSTGRES_PASSWORD=change_me_in_production
+      - POSTGRES_DB=nepse_analytics
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notification:
+    build: ./services/notification
+    ports:
+      - "3005:3005"
+    environment:
+      - NOTIFICATION_PORT=3005
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=nepse_user
+      - POSTGRES_PASSWORD=change_me_in_production
+      - POSTGRES_DB=nepse_analytics
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ai-prediction:
+    build: ./services/ai-prediction
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=nepse_user
+      - POSTGRES_PASSWORD=change_me_in_production
+      - POSTGRES_DB=nepse_analytics
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  news-sentiment:
+    build: ./services/news-sentiment
+    ports:
+      - "8001:8001"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=nepse_user
+      - POSTGRES_PASSWORD=change_me_in_production
+      - POSTGRES_DB=nepse_analytics
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Frontend
+  frontend:
+    build: ./frontend
+    ports:
+      - "3100:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api-gateway:3000/api
+    depends_on:
+      - api-gateway
+
+volumes:
+  postgres-data:
+  redis-data:
