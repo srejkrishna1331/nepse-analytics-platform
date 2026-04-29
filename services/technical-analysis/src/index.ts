@@ -11,6 +11,7 @@ import { calculateVWAP } from './indicators/vwap';
 import { calculateFibonacciRetracement } from './indicators/fibonacci';
 import { detectSupportResistance, detectTrendlines } from './patterns/support-resistance';
 import { detectPatterns } from './patterns/chart-patterns';
+import { detectOrderBlocks, detectLiquidityZones, detectFairValueGaps, detectMarketStructure } from './indicators/smc';
 
 const app = express();
 const PORT = parseInt(process.env.TECHNICAL_ANALYSIS_PORT || '3002');
@@ -171,6 +172,39 @@ app.get('/api/patterns/:symbol', async (req, res) => {
   } catch (err) {
     console.error('Error detecting patterns:', err);
     res.status(500).json({ error: 'Failed to detect patterns' });
+  }
+});
+
+// Smart Money Concepts — Order Blocks, Liquidity Zones, FVG, Market Structure
+app.get('/api/smc/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const data = await getOHLCData(symbol, 200);
+    if (data.length < 30) {
+      return res.status(400).json({ error: 'Insufficient data for SMC analysis' });
+    }
+
+    const opens = data.map((d: { open: number }) => Number(d.open));
+    const highs = data.map((d: { high: number }) => Number(d.high));
+    const lows = data.map((d: { low: number }) => Number(d.low));
+    const closes = data.map((d: { close: number }) => Number(d.close));
+    const volumes = data.map((d: { volume: number }) => Number(d.volume));
+
+    const orderBlocks = detectOrderBlocks(opens, highs, lows, closes, volumes);
+    const liquidityZones = detectLiquidityZones(highs, lows);
+    const fairValueGaps = detectFairValueGaps(highs, lows, closes);
+    const marketStructure = detectMarketStructure(highs, lows);
+
+    res.json({
+      symbol: symbol.toUpperCase(),
+      orderBlocks,
+      liquidityZones,
+      fairValueGaps,
+      marketStructure,
+    });
+  } catch (err) {
+    console.error('Error in SMC analysis:', err);
+    res.status(500).json({ error: 'Failed to perform SMC analysis' });
   }
 });
 

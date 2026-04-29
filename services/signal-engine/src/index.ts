@@ -11,6 +11,7 @@ import {
   evaluateADX,
 } from './rules/signal-rules';
 import { calculateSignalScore } from './scoring/score-calculator';
+import { detectPanicSelling, detectFOMO, detectCapitulation, detectEuphoria } from './rules/behavioral-analysis';
 
 const app = express();
 const PORT = parseInt(process.env.SIGNAL_ENGINE_PORT || '3003');
@@ -289,6 +290,42 @@ function generateRecommendation(signal: {
   }
   return `HOLD - No clear directional bias. Wait for a clearer setup before entering.`;
 }
+
+// Behavioral finance analysis for a stock
+app.get('/api/behavioral/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+
+    const [taResponse, ohlcResponse] = await Promise.all([
+      axios.get(`${TA_SERVICE}/api/indicators/${symbol}?days=365`),
+      axios.get(`${MARKET_SERVICE}/api/stocks/${symbol}/ohlc?days=30`),
+    ]);
+
+    const { indicators } = taResponse.data;
+    const ohlcData = ohlcResponse.data;
+
+    const closes = ohlcData.map((d: { close: number }) => Number(d.close));
+    const volumes = ohlcData.map((d: { volume: number }) => Number(d.volume));
+    const avgVolume = volumes.reduce((s: number, v: number) => s + v, 0) / volumes.length;
+    const lastRSI = indicators.rsi.length > 0 ? indicators.rsi[indicators.rsi.length - 1] : 50;
+
+    const signals = [
+      detectPanicSelling(closes, volumes, avgVolume),
+      detectFOMO(closes, volumes, avgVolume),
+      detectCapitulation(closes, volumes, avgVolume, lastRSI),
+      detectEuphoria(closes, volumes, avgVolume, lastRSI),
+    ].filter(Boolean);
+
+    res.json({
+      symbol: symbol.toUpperCase(),
+      behavioralSignals: signals,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Behavioral analysis error:', err);
+    res.status(500).json({ error: 'Behavioral analysis failed' });
+  }
+});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Signal Engine running on port ${PORT}`);
