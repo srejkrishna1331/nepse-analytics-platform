@@ -7,6 +7,7 @@ import {
   NormalizedOHLC,
 } from '../clients/nepse-client';
 import { getCached, setCache, CACHE_KEYS } from '../cache/redis-cache';
+import { broadcast } from '../ws/websocket-server';
 
 // ---------------------------------------------------------------------------
 // TTLs
@@ -206,10 +207,39 @@ export class MarketDataService {
     const poll = async (): Promise<void> => {
       try {
         const open = await this.isMarketOpen();
+
+        // Always broadcast market status
+        broadcast({
+          type: 'status_update',
+          timestamp: new Date().toISOString(),
+          data: { isOpen: open },
+        });
+
         if (open) {
           console.log('[Poller] Market open — fetching live data');
-          await this.getLiveMarket();
-          await this.getIndices();
+          const stocks = await this.getLiveMarket();
+          const indices = await this.getIndices();
+
+          // Push live data to all connected WebSocket clients
+          if (stocks.length > 0) {
+            broadcast({
+              type: 'market_update',
+              timestamp: new Date().toISOString(),
+              data: {
+                marketOpen: true,
+                count: stocks.length,
+                lastUpdated: new Date().toISOString(),
+                data: stocks,
+              },
+            });
+          }
+          if (indices.length > 0) {
+            broadcast({
+              type: 'index_update',
+              timestamp: new Date().toISOString(),
+              data: indices,
+            });
+          }
         } else {
           console.log('[Poller] Market closed — skipping live fetch');
         }
@@ -224,7 +254,19 @@ export class MarketDataService {
     // Fallback: every 60 seconds regardless (catches anything the primary misses)
     this.fallbackInterval = setInterval(async () => {
       try {
-        await this.getLiveMarket();
+        const stocks = await this.getLiveMarket();
+        if (stocks.length > 0) {
+          broadcast({
+            type: 'market_update',
+            timestamp: new Date().toISOString(),
+            data: {
+              marketOpen: false,
+              count: stocks.length,
+              lastUpdated: new Date().toISOString(),
+              data: stocks,
+            },
+          });
+        }
       } catch {
         // silently ignore fallback errors
       }

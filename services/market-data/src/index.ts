@@ -1,11 +1,14 @@
+import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
 import { Pool } from 'pg';
 import { getCached, setCache, CACHE_KEYS, DEFAULT_TTL, EOD_TTL } from './cache/redis-cache';
 import { startCronJobs } from './jobs/cron-jobs';
 import { marketDataService } from './services/market-data-service';
+import { initWebSocketServer, getClientCount } from './ws/websocket-server';
 
 const app = express();
+const server = createServer(app);
 const PORT = parseInt(process.env.MARKET_DATA_PORT || '3001');
 
 const pool = new Pool({
@@ -20,7 +23,7 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'market-data' });
+  res.json({ status: 'ok', service: 'market-data', wsClients: getClientCount() });
 });
 
 // Get all stocks with latest prices
@@ -314,13 +317,17 @@ app.get('/api/live/status', async (_req, res) => {
   }
 });
 
+// Initialise WebSocket server (upgrades from the same HTTP server)
+initWebSocketServer(server);
+
 // Start cron jobs and live polling
 startCronJobs();
 marketDataService.startPolling();
 
-app.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Market Data Service running on port ${PORT}`);
   console.log(`Live endpoints: /api/live, /api/stock/:symbol, /api/ohlc/:symbol`);
+  console.log(`WebSocket: ws://localhost:${PORT}/ws`);
 });
 
 export default app;

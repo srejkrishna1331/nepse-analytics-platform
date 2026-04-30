@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { fetchLiveMarket, fetchIndices, LiveStock, LiveIndex } from '@/lib/api';
+import { useMemo } from 'react';
+import { LiveStock, LiveIndex } from '@/lib/api';
+import { useMarketWebSocket } from '@/hooks/useMarketWebSocket';
 
 interface StockData {
   symbol: string;
@@ -80,39 +81,25 @@ function liveIndexToIndexData(i: LiveIndex): IndexData {
 }
 
 export default function Dashboard() {
-  const [stocks, setStocks] = useState<StockData[]>(SAMPLE_STOCKS);
-  const [indices, setIndices] = useState<IndexData[]>(SAMPLE_INDICES);
-  const [isLive, setIsLive] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
-  const [marketOpen, setMarketOpen] = useState<boolean | null>(null);
+  const ws = useMarketWebSocket();
 
-  const loadData = useCallback(async () => {
-    try {
-      const [marketRes, idxRes] = await Promise.allSettled([
-        fetchLiveMarket(),
-        fetchIndices(),
-      ]);
-
-      if (marketRes.status === 'fulfilled' && marketRes.value.data.length > 0) {
-        setStocks(marketRes.value.data.map(liveStockToStockData));
-        setMarketOpen(marketRes.value.marketOpen);
-        setLastUpdated(marketRes.value.lastUpdated);
-        setIsLive(true);
-      }
-
-      if (idxRes.status === 'fulfilled' && idxRes.value.length > 0) {
-        setIndices(idxRes.value.map(liveIndexToIndexData));
-      }
-    } catch {
-      // Silently fall back to sample data
+  const stocks = useMemo<StockData[]>(() => {
+    if (ws.stocks && ws.stocks.data.length > 0) {
+      return ws.stocks.data.map(liveStockToStockData);
     }
-  }, []);
+    return SAMPLE_STOCKS;
+  }, [ws.stocks]);
 
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 30_000);
-    return () => clearInterval(interval);
-  }, [loadData]);
+  const indices = useMemo<IndexData[]>(() => {
+    if (ws.indices.length > 0) {
+      return ws.indices.map(liveIndexToIndexData);
+    }
+    return SAMPLE_INDICES;
+  }, [ws.indices]);
+
+  const isLive = ws.isLive;
+  const lastUpdated = ws.lastUpdated;
+  const marketOpen = ws.marketOpen;
 
   const gainers = [...stocks].filter(s => s.change > 0).sort((a, b) => b.change_percent - a.change_percent);
   const losers = [...stocks].filter(s => s.change < 0).sort((a, b) => a.change_percent - b.change_percent);
@@ -127,8 +114,8 @@ export default function Dashboard() {
       {/* Live Data Indicator */}
       {isLive && (
         <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-          <span>Live Data</span>
+          <span className={`w-2 h-2 rounded-full ${ws.isWsConnected ? 'bg-green-400' : 'bg-yellow-400'} animate-pulse`} />
+          <span>{ws.isWsConnected ? 'Live (WebSocket)' : 'Live (Polling)'}</span>
           {marketOpen !== null && (
             <span className={`px-2 py-0.5 rounded text-xs ${marketOpen ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
               Market {marketOpen ? 'Open' : 'Closed'}

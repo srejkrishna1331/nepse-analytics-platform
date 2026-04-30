@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { fetchLiveMarket, LiveStock } from '@/lib/api';
+import { useState, useMemo } from 'react';
+import { LiveStock } from '@/lib/api';
+import { useMarketWebSocket } from '@/hooks/useMarketWebSocket';
 
 interface MarketStock {
   symbol: string;
@@ -54,28 +55,18 @@ function liveToMarketStock(s: LiveStock): MarketStock {
 }
 
 export default function MarketPage() {
-  const [stocks, setStocks] = useState<MarketStock[]>(SAMPLE_STOCKS);
+  const ws = useMarketWebSocket();
   const [search, setSearch] = useState('');
   const [sectorFilter, setSectorFilter] = useState('All');
-  const [isLive, setIsLive] = useState(false);
 
-  const loadData = useCallback(async () => {
-    try {
-      const res = await fetchLiveMarket();
-      if (res.data.length > 0) {
-        setStocks(res.data.map(liveToMarketStock));
-        setIsLive(true);
-      }
-    } catch {
-      // Fall back to sample data
+  const stocks = useMemo<MarketStock[]>(() => {
+    if (ws.stocks && ws.stocks.data.length > 0) {
+      return ws.stocks.data.map(liveToMarketStock);
     }
-  }, []);
+    return SAMPLE_STOCKS;
+  }, [ws.stocks]);
 
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 30_000);
-    return () => clearInterval(interval);
-  }, [loadData]);
+  const isLive = ws.isLive;
 
   const sectors = ['All', ...Array.from(new Set(stocks.map(s => s.sector)))];
   const filtered = stocks.filter(s => {
@@ -90,8 +81,8 @@ export default function MarketPage() {
         <h1 className="text-2xl font-bold">Market Overview</h1>
         {isLive && (
           <span className="flex items-center gap-1 text-xs text-green-400">
-            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-            Live
+            <span className={`w-2 h-2 rounded-full ${ws.isWsConnected ? 'bg-green-400' : 'bg-yellow-400'} animate-pulse`} />
+            {ws.isWsConnected ? 'Live (WS)' : 'Live'}
           </span>
         )}
       </div>
