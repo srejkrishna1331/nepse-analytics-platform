@@ -1,4 +1,5 @@
 import axios from 'axios';
+import https from 'https';
 import {
   nepseClient,
   normalizeStock,
@@ -14,6 +15,7 @@ import {
 const NEPSE_API_BASE = 'https://nepalstock.com/api/nots';
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
+const agent = new https.Agent({ rejectUnauthorized: false });
 
 interface NepseAPIResponse<T> {
   body: T;
@@ -25,10 +27,12 @@ async function fetchWithRetry<T>(url: string, retries = MAX_RETRIES): Promise<T 
     try {
       const response = await axios.get<NepseAPIResponse<T>>(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'User-Agent': 'Mozilla/5.0',
           Accept: 'application/json',
+          Referer: 'https://www.nepalstock.com',
         },
         timeout: 15000,
+        httpsAgent: agent,
       });
       return response.data.body;
     } catch (error) {

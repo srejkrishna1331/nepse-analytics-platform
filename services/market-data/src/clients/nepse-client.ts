@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import https from 'https';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,6 +20,23 @@ export interface RawNepseSecurity {
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
   sectorName?: string;
+}
+
+/** Shape returned by the nepse-data-api Python bridge /stocks endpoint */
+interface BridgeStock {
+  securityId: string;
+  securityName: string;
+  symbol: string;
+  openPrice: number;
+  highPrice: number;
+  lowPrice: number;
+  lastTradedPrice: number;
+  totalTradeQuantity: number;
+  totalTradeValue: number;
+  percentageChange: number;
+  previousClose: number;
+  lastUpdatedDateTime: string;
+  averageTradedPrice: number;
 }
 
 export interface RawNepseIndex {
@@ -72,6 +90,7 @@ export interface NormalizedOHLC {
 // Client configuration
 // ---------------------------------------------------------------------------
 
+const BRIDGE_BASE = process.env.NEPSE_BRIDGE_URL || 'http://localhost:4000';
 const NEPSE_OFFICIAL_BASE = 'https://nepalstock.com/api/nots';
 const NEPSE_NEWWEB_BASE = 'https://newweb.nepalstock.com.np/api/nots';
 const MAX_RETRIES = 3;
@@ -79,11 +98,12 @@ const RETRY_DELAY_MS = 1500;
 const REQUEST_TIMEOUT_MS = 15000;
 
 const COMMON_HEADERS = {
-  'User-Agent':
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'User-Agent': 'Mozilla/5.0',
   Accept: 'application/json',
-  'Accept-Language': 'en-US,en;q=0.9',
+  Referer: 'https://www.nepalstock.com',
 };
+
+const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 // ---------------------------------------------------------------------------
 // Retry helper
@@ -101,7 +121,6 @@ async function fetchWithRetry<T>(
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const response = await client.get(url);
-      // NEPSE API may wrap data in a `body` field
       const data = response.data;
       if (data && typeof data === 'object' && 'body' in data) {
         return data.body as T;
@@ -124,10 +143,33 @@ async function fetchWithRetry<T>(
 }
 
 // ---------------------------------------------------------------------------
-// NepseClient – talks to official NEPSE API with fallback to newweb mirror
+// Bridge stock → RawNepseSecurity mapper
+// ---------------------------------------------------------------------------
+
+function bridgeStockToRaw(b: BridgeStock): RawNepseSecurity {
+  const close = b.lastTradedPrice ?? b.highPrice ?? 0;
+  const prevClose = b.previousClose ?? close;
+  return {
+    securityId: Number(b.securityId) || 0,
+    securityName: b.securityName ?? b.symbol,
+    symbol: b.symbol,
+    openPrice: b.openPrice ?? 0,
+    highPrice: b.highPrice ?? 0,
+    lowPrice: b.lowPrice ?? 0,
+    closePrice: close,
+    totalTradedQuantity: b.totalTradeQuantity ?? 0,
+    totalTradedValue: b.totalTradeValue ?? 0,
+    previousDayClosePrice: prevClose,
+    lastUpdatedDateTime: b.lastUpdatedDateTime ?? new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// NepseClient – Python bridge (primary) → official API (fallback)
 // ---------------------------------------------------------------------------
 
 export class NepseClient {
+  private bridge: AxiosInstance;
   private primary: AxiosInstance;
   private fallback: AxiosInstance;
   private activeBase: 'primary' | 'fallback' = 'primary';
@@ -135,16 +177,23 @@ export class NepseClient {
   private readonly FAILURE_THRESHOLD = 3;
 
   constructor() {
+    this.bridge = axios.create({
+      baseURL: BRIDGE_BASE,
+      timeout: 10000,
+    });
+
     this.primary = axios.create({
       baseURL: NEPSE_OFFICIAL_BASE,
       timeout: REQUEST_TIMEOUT_MS,
       headers: COMMON_HEADERS,
+      httpsAgent,
     });
 
     this.fallback = axios.create({
       baseURL: NEPSE_NEWWEB_BASE,
       timeout: REQUEST_TIMEOUT_MS,
       headers: COMMON_HEADERS,
+      httpsAgent,
     });
   }
 
@@ -161,15 +210,14 @@ export class NepseClient {
     );
   }
 
+  /** Try official NEPSE API endpoints (primary + fallback mirror). */
   private async fetchWithFallback<T>(path: string): Promise<T | null> {
-    // Try active source first
     const result = await fetchWithRetry<T>(this.getClient(), path, 2);
     if (result !== null) {
       this.consecutiveFailures = 0;
       return result;
     }
 
-    // Primary failed – try the other source
     this.consecutiveFailures++;
     if (this.consecutiveFailures >= this.FAILURE_THRESHOLD) {
       this.switchSource();
@@ -179,7 +227,6 @@ export class NepseClient {
       this.activeBase === 'primary' ? this.fallback : this.primary;
     const fallbackResult = await fetchWithRetry<T>(other, path, 2);
     if (fallbackResult !== null) {
-      // Other source works – switch to it
       this.switchSource();
     }
     return fallbackResult;
@@ -190,6 +237,13 @@ export class NepseClient {
   // -----------------------------------------------------------------------
 
   async fetchMarketStatus(): Promise<RawNepseMarketStatus | null> {
+    // Try bridge first
+    try {
+      const resp = await this.bridge.get('/market-status');
+      if (resp.data) return resp.data as RawNepseMarketStatus;
+    } catch {
+      // bridge unavailable — fall through
+    }
     return this.fetchWithFallback('/nepse-data/market-open');
   }
 
@@ -202,13 +256,37 @@ export class NepseClient {
   }
 
   async fetchSecurityList(): Promise<RawNepseSecurity[] | null> {
-    // Try the daily trade stat first (more detailed), fall back to today-price
+    // 1. Try Python bridge (handles WASM auth automatically)
+    try {
+      const resp = await this.bridge.get('/stocks');
+      const stocks = resp.data as BridgeStock[];
+      if (Array.isArray(stocks) && stocks.length > 0) {
+        console.log(`[NepseClient] Bridge returned ${stocks.length} stocks`);
+        return stocks.map(bridgeStockToRaw);
+      }
+    } catch (err) {
+      const msg = err instanceof AxiosError ? err.message : String(err);
+      console.warn(`[NepseClient] Bridge unavailable: ${msg}`);
+    }
+
+    // 2. Try direct NEPSE API
     const result = await this.fetchSecurityDailyTradeStat();
     if (result && result.length > 0) return result;
     return this.fetchTodayPrice();
   }
 
   async fetchIndices(): Promise<RawNepseIndex[] | null> {
+    // Try bridge first
+    try {
+      const resp = await this.bridge.get('/indices');
+      const indices = resp.data;
+      if (Array.isArray(indices) && indices.length > 0) {
+        console.log(`[NepseClient] Bridge returned ${indices.length} indices`);
+        return indices as RawNepseIndex[];
+      }
+    } catch {
+      // bridge unavailable — fall through
+    }
     return this.fetchWithFallback('/nepse-data/sub-indices');
   }
 
