@@ -1,4 +1,15 @@
 import axios from 'axios';
+import {
+  nepseClient,
+  normalizeStock,
+  normalizeIndex,
+  NormalizedStock,
+  NormalizedIndex,
+} from '../clients/nepse-client';
+
+// ---------------------------------------------------------------------------
+// Legacy base URL (used as secondary fallback if new client fails)
+// ---------------------------------------------------------------------------
 
 const NEPSE_API_BASE = 'https://nepalstock.com/api/nots';
 const MAX_RETRIES = 3;
@@ -30,6 +41,10 @@ async function fetchWithRetry<T>(url: string, retries = MAX_RETRIES): Promise<T 
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Re-export types used by cron-jobs (kept for backward compatibility)
+// ---------------------------------------------------------------------------
+
 export interface NepseStockData {
   symbol: string;
   name: string;
@@ -53,15 +68,35 @@ export interface NepseIndexData {
   turnover: number;
 }
 
+// ---------------------------------------------------------------------------
+// Public functions – try new NepseClient first, then legacy fallback
+// ---------------------------------------------------------------------------
+
 export async function fetchMarketSummary(): Promise<Record<string, unknown> | null> {
+  const result = await nepseClient.fetchMarketSummary();
+  if (result) return result;
   return fetchWithRetry(`${NEPSE_API_BASE}/market-summary`);
 }
 
 export async function fetchTopGainers(): Promise<NepseStockData[] | null> {
+  const raw = await nepseClient.fetchTopGainers();
+  if (raw && raw.length > 0) {
+    return raw.map((r) => {
+      const n = normalizeStock(r);
+      return { ...n, previousClose: n.previousClose } as NepseStockData;
+    });
+  }
   return fetchWithRetry(`${NEPSE_API_BASE}/top-gainers`);
 }
 
 export async function fetchTopLosers(): Promise<NepseStockData[] | null> {
+  const raw = await nepseClient.fetchTopLosers();
+  if (raw && raw.length > 0) {
+    return raw.map((r) => {
+      const n = normalizeStock(r);
+      return { ...n, previousClose: n.previousClose } as NepseStockData;
+    });
+  }
   return fetchWithRetry(`${NEPSE_API_BASE}/top-losers`);
 }
 
@@ -74,10 +109,22 @@ export async function fetchTopVolume(): Promise<NepseStockData[] | null> {
 }
 
 export async function fetchStockPrice(symbol: string): Promise<NepseStockData | null> {
+  const raw = await nepseClient.fetchSecurityDetail(symbol);
+  if (raw) {
+    const n = normalizeStock(raw);
+    return { ...n, previousClose: n.previousClose } as NepseStockData;
+  }
   return fetchWithRetry(`${NEPSE_API_BASE}/security/${symbol}`);
 }
 
 export async function fetchIndices(): Promise<NepseIndexData[] | null> {
+  const raw = await nepseClient.fetchIndices();
+  if (raw && raw.length > 0) {
+    return raw.map((r) => {
+      const n = normalizeIndex(r);
+      return n as NepseIndexData;
+    });
+  }
   return fetchWithRetry(`${NEPSE_API_BASE}/indices`);
 }
 
@@ -86,6 +133,13 @@ export async function fetchSectorSummary(): Promise<Record<string, unknown>[] | 
 }
 
 export async function fetchAllStocks(): Promise<NepseStockData[] | null> {
+  const raw = await nepseClient.fetchSecurityList();
+  if (raw && raw.length > 0) {
+    return raw.map((r) => {
+      const n = normalizeStock(r);
+      return { ...n, previousClose: n.previousClose } as NepseStockData;
+    });
+  }
   return fetchWithRetry(`${NEPSE_API_BASE}/security/list`);
 }
 

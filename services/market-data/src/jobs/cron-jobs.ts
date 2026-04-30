@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { Pool } from 'pg';
 import { fetchAllStocks, fetchIndices, fetchMarketSummary } from '../scrapers/nepse-scraper';
+import { nepseClient, normalizeStock, normalizeIndex } from '../clients/nepse-client';
 import { setCache, CACHE_KEYS, DEFAULT_TTL, EOD_TTL, invalidateCache } from '../cache/redis-cache';
 
 const pool = new Pool({

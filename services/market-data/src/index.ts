@@ -3,6 +3,7 @@ import cors from 'cors';
 import { Pool } from 'pg';
 import { getCached, setCache, CACHE_KEYS, DEFAULT_TTL, EOD_TTL } from './cache/redis-cache';
 import { startCronJobs } from './jobs/cron-jobs';
+import { marketDataService } from './services/market-data-service';
 
 const app = express();
 const PORT = parseInt(process.env.MARKET_DATA_PORT || '3001');
@@ -236,11 +237,90 @@ app.get('/api/corporate-actions', async (_req, res) => {
   }
 });
 
-// Start cron jobs
+// ---------------------------------------------------------------------------
+// Real-time NEPSE Market Data endpoints (fetched from nepalstock.com APIs)
+// ---------------------------------------------------------------------------
+
+// GET /api/live — all securities with real-time prices
+// (served as /api/market/live through the API Gateway)
+app.get('/api/live', async (_req, res) => {
+  try {
+    const stocks = await marketDataService.getLiveMarket();
+    const isOpen = await marketDataService.isMarketOpen();
+    res.json({
+      marketOpen: isOpen,
+      count: stocks.length,
+      lastUpdated: new Date().toISOString(),
+      data: stocks,
+    });
+  } catch (err) {
+    console.error('Error fetching live market:', err);
+    res.status(500).json({ error: 'Failed to fetch live market data' });
+  }
+});
+
+// GET /api/stock/:symbol — single stock real-time data
+app.get('/api/stock/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const stock = await marketDataService.getStock(symbol);
+    if (!stock) {
+      return res.status(404).json({ error: `Stock ${symbol.toUpperCase()} not found` });
+    }
+    res.json(stock);
+  } catch (err) {
+    console.error('Error fetching stock:', err);
+    res.status(500).json({ error: 'Failed to fetch stock data' });
+  }
+});
+
+// GET /api/ohlc/:symbol — OHLC data for a symbol
+app.get('/api/ohlc/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const days = parseInt(req.query.days as string) || 365;
+    const ohlc = await marketDataService.getOHLC(symbol, days);
+    res.json({
+      symbol: symbol.toUpperCase(),
+      days,
+      count: ohlc.length,
+      data: ohlc,
+    });
+  } catch (err) {
+    console.error('Error fetching OHLC:', err);
+    res.status(500).json({ error: 'Failed to fetch OHLC data' });
+  }
+});
+
+// GET /api/live/indices — real-time NEPSE indices
+app.get('/api/live/indices', async (_req, res) => {
+  try {
+    const indices = await marketDataService.getIndices();
+    res.json(indices);
+  } catch (err) {
+    console.error('Error fetching indices:', err);
+    res.status(500).json({ error: 'Failed to fetch indices' });
+  }
+});
+
+// GET /api/live/status — market open/closed
+app.get('/api/live/status', async (_req, res) => {
+  try {
+    const isOpen = await marketDataService.isMarketOpen();
+    res.json({ isOpen, timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('Error checking market status:', err);
+    res.status(500).json({ error: 'Failed to check market status' });
+  }
+});
+
+// Start cron jobs and live polling
 startCronJobs();
+marketDataService.startPolling();
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Market Data Service running on port ${PORT}`);
+  console.log(`Live endpoints: /api/live, /api/stock/:symbol, /api/ohlc/:symbol`);
 });
 
 export default app;

@@ -49,6 +49,12 @@ export const CACHE_KEYS = {
   OHLC: (symbol: string, days: number) => `market:ohlc:${symbol}:${days}`,
   INDICES: 'market:indices',
   SECTORS: 'market:sectors',
+  // Live data keys (shorter TTL for real-time)
+  LIVE_MARKET: 'market:live',
+  STOCK_LIVE: (symbol: string) => `market:live:stock:${symbol}`,
+  OHLC_LIVE: (symbol: string, days: number) => `market:live:ohlc:${symbol}:${days}`,
+  INDICES_LIVE: 'market:live:indices',
+  MARKET_STATUS: 'market:status',
 };
 
 export { DEFAULT_TTL, EOD_TTL, STATIC_TTL };

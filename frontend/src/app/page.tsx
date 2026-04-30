@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import { fetchLiveMarket, fetchIndices, LiveStock, LiveIndex } from '@/lib/api';
 
 interface StockData {
   symbol: string;
@@ -56,15 +57,89 @@ function formatNum(n: number): string {
   return n.toString();
 }
 
+function liveStockToStockData(s: LiveStock): StockData {
+  return {
+    symbol: s.symbol,
+    name: s.name,
+    sector: s.sector,
+    close: s.close,
+    change: s.change,
+    change_percent: s.changePercent,
+    volume: s.volume,
+    turnover: s.turnover,
+  };
+}
+
+function liveIndexToIndexData(i: LiveIndex): IndexData {
+  return {
+    name: i.index,
+    value: i.currentValue,
+    change: i.change,
+    change_percent: i.changePercent,
+  };
+}
+
 export default function Dashboard() {
-  const [stocks] = useState<StockData[]>(SAMPLE_STOCKS);
-  const [indices] = useState<IndexData[]>(SAMPLE_INDICES);
+  const [stocks, setStocks] = useState<StockData[]>(SAMPLE_STOCKS);
+  const [indices, setIndices] = useState<IndexData[]>(SAMPLE_INDICES);
+  const [isLive, setIsLive] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [marketOpen, setMarketOpen] = useState<boolean | null>(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [marketRes, idxRes] = await Promise.allSettled([
+        fetchLiveMarket(),
+        fetchIndices(),
+      ]);
+
+      if (marketRes.status === 'fulfilled' && marketRes.value.data.length > 0) {
+        setStocks(marketRes.value.data.map(liveStockToStockData));
+        setMarketOpen(marketRes.value.marketOpen);
+        setLastUpdated(marketRes.value.lastUpdated);
+        setIsLive(true);
+      }
+
+      if (idxRes.status === 'fulfilled' && idxRes.value.length > 0) {
+        setIndices(idxRes.value.map(liveIndexToIndexData));
+      }
+    } catch {
+      // Silently fall back to sample data
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 30_000);
+    return () => clearInterval(interval);
+  }, [loadData]);
 
   const gainers = [...stocks].filter(s => s.change > 0).sort((a, b) => b.change_percent - a.change_percent);
   const losers = [...stocks].filter(s => s.change < 0).sort((a, b) => a.change_percent - b.change_percent);
 
+  const totalTurnover = stocks.reduce((sum, s) => sum + s.turnover, 0);
+  const totalVolume = stocks.reduce((sum, s) => sum + s.volume, 0);
+  const advances = stocks.filter(s => s.change > 0).length;
+  const declines = stocks.filter(s => s.change < 0).length;
+
   return (
     <div className="space-y-6">
+      {/* Live Data Indicator */}
+      {isLive && (
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+          <span>Live Data</span>
+          {marketOpen !== null && (
+            <span className={`px-2 py-0.5 rounded text-xs ${marketOpen ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
+              Market {marketOpen ? 'Open' : 'Closed'}
+            </span>
+          )}
+          {lastUpdated && (
+            <span>| Updated: {new Date(lastUpdated).toLocaleTimeString()}</span>
+          )}
+        </div>
+      )}
+
       {/* Market Indices */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {indices.map((idx) => (
@@ -82,18 +157,18 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-dark-card border border-dark-border rounded-xl p-4">
           <h3 className="text-sm font-semibold text-gray-400 mb-1">Total Turnover</h3>
-          <div className="text-xl font-bold">Rs. 5.50B</div>
+          <div className="text-xl font-bold">Rs. {formatNum(totalTurnover)}</div>
         </div>
         <div className="bg-dark-card border border-dark-border rounded-xl p-4">
           <h3 className="text-sm font-semibold text-gray-400 mb-1">Total Volume</h3>
-          <div className="text-xl font-bold">12.0M</div>
+          <div className="text-xl font-bold">{formatNum(totalVolume)}</div>
         </div>
         <div className="bg-dark-card border border-dark-border rounded-xl p-4">
           <h3 className="text-sm font-semibold text-gray-400 mb-1">Advances / Declines</h3>
           <div className="text-xl font-bold">
-            <span className="text-green-400">156</span>
+            <span className="text-green-400">{advances}</span>
             <span className="text-gray-500 mx-2">/</span>
-            <span className="text-red-400">82</span>
+            <span className="text-red-400">{declines}</span>
           </div>
         </div>
       </div>
@@ -103,7 +178,7 @@ export default function Dashboard() {
         <div className="bg-dark-card border border-dark-border rounded-xl p-4">
           <h3 className="text-lg font-semibold mb-4 text-green-400">Top Gainers</h3>
           <div className="space-y-2">
-            {gainers.map((s) => (
+            {gainers.slice(0, 10).map((s) => (
               <div key={s.symbol} className="flex items-center justify-between p-2 rounded-lg hover:bg-dark-border/30">
                 <div>
                   <div className="font-semibold text-sm">{s.symbol}</div>
@@ -122,7 +197,7 @@ export default function Dashboard() {
         <div className="bg-dark-card border border-dark-border rounded-xl p-4">
           <h3 className="text-lg font-semibold mb-4 text-red-400">Top Losers</h3>
           <div className="space-y-2">
-            {losers.map((s) => (
+            {losers.slice(0, 10).map((s) => (
               <div key={s.symbol} className="flex items-center justify-between p-2 rounded-lg hover:bg-dark-border/30">
                 <div>
                   <div className="font-semibold text-sm">{s.symbol}</div>
@@ -175,7 +250,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {[...stocks].sort((a, b) => b.volume - a.volume).map((s) => (
+              {[...stocks].sort((a, b) => b.volume - a.volume).slice(0, 20).map((s) => (
                 <tr key={s.symbol} className="border-b border-dark-border/30 hover:bg-dark-border/20">
                   <td className="py-2 px-3 font-semibold text-primary-400">{s.symbol}</td>
                   <td className="py-2 px-3 text-gray-300">{s.name}</td>
