@@ -1,0 +1,28 @@
+{
+  "name": "nepse-analytics-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-grade NEPSE (Nepal Stock Exchange) analytics platform",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "docker compose up --build",
+    "dev:gateway": "cd services/api-gateway && npm run dev",
+    "dev:market": "cd services/market-data && npm run dev",
+    "dev:ta": "cd services/technical-analysis && npm run dev",
+    "dev:signal": "cd services/signal-engine && npm run dev",
+    "dev:portfolio": "cd services/portfolio && npm run dev",
+    "dev:notification": "cd services/notification && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:migrate": "cd db && node migrate.js",
+    "db:seed": "cd db && node seed.js"
+  },
+  "keywords": ["nepse", "stock-exchange", "analytics", "trading", "nepal"],
+  "license": "MIT"
+}
