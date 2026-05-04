@@ -59,14 +59,21 @@ export class MarketDataService {
       // Fetch from NEPSE
       const raw = await nepseClient.fetchSecurityList();
       if (!raw || raw.length === 0) {
+        // Try last-known-good data before returning empty
+        const lastKnown = await getCached<NormalizedStock[]>('market:last-known');
+        if (lastKnown && lastKnown.length > 0) {
+          console.log(`[MarketDataService] Using last-known data (${lastKnown.length} stocks)`);
+          return lastKnown;
+        }
         console.warn('[MarketDataService] No live market data received');
         return [];
       }
 
       const normalized = raw.map(normalizeStock).filter((s) => s.symbol);
 
-      // Cache for 30 seconds
+      // Cache for 30 seconds + persist last-known-good (5 min TTL)
       await setCache(CACHE_KEYS.LIVE_MARKET, normalized, LIVE_TTL);
+      await setCache('market:last-known', normalized, 300);
       console.log(
         `[MarketDataService] Cached ${normalized.length} live stocks`,
       );
@@ -186,11 +193,13 @@ export class MarketDataService {
       return status.isOpen === 'OPEN';
     }
     // Fallback: check if within NEPSE trading hours (Sun–Thu, 11:00–15:00 NPT)
+    // NPT = UTC+5:45 — compute properly by adding offset in minutes
     const now = new Date();
-    // NPT = UTC+5:45
-    const nptHour =
-      (now.getUTCHours() + 5 + (now.getUTCMinutes() + 45 >= 60 ? 1 : 0)) % 24;
-    const nptDay = now.getUTCDay(); // 0=Sun
+    const utcMs = now.getTime();
+    const nptMs = utcMs + (5 * 60 + 45) * 60 * 1000;
+    const nptDate = new Date(nptMs);
+    const nptDay = nptDate.getUTCDay(); // 0=Sun
+    const nptHour = nptDate.getUTCHours();
     const isTradingDay = nptDay >= 0 && nptDay <= 4; // Sun-Thu
     const isTradingHour = nptHour >= 11 && nptHour < 15;
     return isTradingDay && isTradingHour;
@@ -251,11 +260,13 @@ export class MarketDataService {
     // Primary: every 10 seconds during market hours
     this.pollInterval = setInterval(poll, 10_000);
 
-    // Fallback: every 60 seconds regardless (catches anything the primary misses)
+    // Fallback: every 60 seconds regardless — only broadcasts if data is non-empty
     this.fallbackInterval = setInterval(async () => {
       try {
         const stocks = await this.getLiveMarket();
         if (stocks.length > 0) {
+          // Persist last-known-good data (5 min TTL for market-closed gaps)
+          await setCache('market:last-known', stocks, 300);
           broadcast({
             type: 'market_update',
             timestamp: new Date().toISOString(),

@@ -1,43 +1,38 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import { fetchSignal, SignalResponse } from '@/lib/api';
 
-interface SignalData {
-  symbol: string;
-  signal: 'BUY' | 'SELL' | 'HOLD';
-  confidence: number;
-  score: number;
-  riskLevel: string;
-  reasoning: string[];
-  indicators: { name: string; signal: string; reason: string }[];
-}
-
-const SAMPLE_SIGNAL: SignalData = {
+const SAMPLE_SIGNAL: SignalResponse = {
   symbol: 'NABIL',
-  signal: 'BUY',
-  confidence: 72.5,
-  score: 68.3,
+  price: 0,
+  signal: 'HOLD',
+  confidence: 0,
+  score: 50,
   riskLevel: 'MEDIUM',
-  reasoning: [
-    '[BUY] RSI at 42.5 approaching oversold - potential rebound',
-    '[BUY] MACD bullish crossover - MACD crossed above signal line',
-    '[BUY] Price near support at 1120 - potential bounce',
-    '[BUY] Short-term SMA above long-term SMA - bullish trend',
-    '[BUY] Above-average volume (1.8x) supports upward move',
-  ],
-  indicators: [
-    { name: 'RSI', signal: 'BUY', reason: 'RSI at 42.5 approaching oversold' },
-    { name: 'MACD', signal: 'BUY', reason: 'Bullish crossover confirmed' },
-    { name: 'Bollinger Bands', signal: 'HOLD', reason: 'Price within bands, near middle' },
-    { name: 'SMA Crossover', signal: 'BUY', reason: 'Golden Cross - bullish trend' },
-    { name: 'Volume', signal: 'BUY', reason: 'Above-average volume (1.8x)' },
-    { name: 'ADX', signal: 'BUY', reason: 'Strong uptrend (ADX: 32.5, +DI > -DI)' },
-  ],
+  reasoning: ['Enter a stock symbol and click Generate Signal'],
+  indicators: [],
 };
 
 export default function SignalsPage() {
   const [symbol, setSymbol] = useState('NABIL');
-  const [signal] = useState<SignalData>(SAMPLE_SIGNAL);
+  const [signal, setSignal] = useState<SignalResponse>(SAMPLE_SIGNAL);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const generateSignal = useCallback(async () => {
+    if (!symbol.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchSignal(symbol.trim());
+      setSignal(data);
+    } catch (err) {
+      setError(`Could not generate signal for ${symbol}. Market data may be unavailable.`);
+    } finally {
+      setLoading(false);
+    }
+  }, [symbol]);
 
   const signalColor = signal.signal === 'BUY' ? 'green' : signal.signal === 'SELL' ? 'red' : 'yellow';
 
@@ -50,19 +45,29 @@ export default function SignalsPage() {
             type="text"
             value={symbol}
             onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+            onKeyDown={(e) => e.key === 'Enter' && generateSignal()}
             className="bg-dark-card border border-dark-border rounded-lg px-4 py-2 text-sm w-32 focus:outline-none focus:border-primary-500"
           />
-          <button className="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
-            Generate Signal
+          <button
+            onClick={generateSignal}
+            disabled={loading}
+            className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
+          >
+            {loading ? 'Analyzing...' : 'Generate Signal'}
           </button>
         </div>
       </div>
+
+      {error && (
+        <div className="bg-red-900/20 border border-red-800/30 rounded-xl p-3 text-sm text-red-300">{error}</div>
+      )}
 
       {/* Signal Summary */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className={`bg-dark-card border rounded-xl p-6 text-center border-${signalColor}-800/50`}>
           <div className="text-sm text-gray-400 mb-2">Signal</div>
           <div className={`text-4xl font-bold text-${signalColor}-400`}>{signal.signal}</div>
+          {signal.price > 0 && <div className="text-xs text-gray-500 mt-1">Rs. {signal.price.toLocaleString()}</div>}
         </div>
         <div className="bg-dark-card border border-dark-border rounded-xl p-6 text-center">
           <div className="text-sm text-gray-400 mb-2">Confidence</div>
@@ -98,25 +103,27 @@ export default function SignalsPage() {
       </div>
 
       {/* Indicator Signals */}
-      <div className="bg-dark-card border border-dark-border rounded-xl p-4">
-        <h3 className="text-lg font-semibold mb-4">Individual Indicator Signals</h3>
-        <div className="space-y-3">
-          {signal.indicators.map((ind, i) => (
-            <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-dark-bg">
-              <div className="flex items-center gap-3">
-                <span className={`w-2 h-2 rounded-full ${ind.signal === 'BUY' ? 'bg-green-400' : ind.signal === 'SELL' ? 'bg-red-400' : 'bg-yellow-400'}`} />
-                <span className="font-medium">{ind.name}</span>
+      {signal.indicators.length > 0 && (
+        <div className="bg-dark-card border border-dark-border rounded-xl p-4">
+          <h3 className="text-lg font-semibold mb-4">Individual Indicator Signals</h3>
+          <div className="space-y-3">
+            {signal.indicators.map((ind, i) => (
+              <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-dark-bg">
+                <div className="flex items-center gap-3">
+                  <span className={`w-2 h-2 rounded-full ${ind.signal === 'BUY' ? 'bg-green-400' : ind.signal === 'SELL' ? 'bg-red-400' : 'bg-yellow-400'}`} />
+                  <span className="font-medium">{ind.name}</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="text-sm text-gray-400">{ind.reason}</span>
+                  <span className={`text-xs font-bold px-2 py-1 rounded ${ind.signal === 'BUY' ? 'bg-green-900/50 text-green-400' : ind.signal === 'SELL' ? 'bg-red-900/50 text-red-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
+                    {ind.signal}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-4">
-                <span className="text-sm text-gray-400">{ind.reason}</span>
-                <span className={`text-xs font-bold px-2 py-1 rounded ${ind.signal === 'BUY' ? 'bg-green-900/50 text-green-400' : ind.signal === 'SELL' ? 'bg-red-900/50 text-red-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
-                  {ind.signal}
-                </span>
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Reasoning */}
       <div className="bg-dark-card border border-dark-border rounded-xl p-4">

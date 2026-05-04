@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import { fetchSignal, fetchScan, SignalResponse } from '@/lib/api';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
-  data?: Record<string, unknown>;
 }
 
 const EXAMPLE_QUERIES = [
@@ -16,85 +16,121 @@ const EXAMPLE_QUERIES = [
   'What is the market sentiment?',
 ];
 
+function formatSignalResponse(data: SignalResponse): string {
+  const emoji = data.signal === 'BUY' ? '📈' : data.signal === 'SELL' ? '📉' : '📊';
+  let msg = `**${data.symbol} Analysis** (Rs. ${data.price.toLocaleString()}):\n\n`;
+  msg += `${emoji} **Signal: ${data.signal}** (Confidence: ${data.confidence}%)\n`;
+  msg += `📊 Score: ${data.score}/100 | Risk: ${data.riskLevel}\n\n`;
+  msg += `**Key Indicators:**\n`;
+  for (const ind of data.indicators) {
+    const icon = ind.signal === 'BUY' ? '▲' : ind.signal === 'SELL' ? '▼' : '●';
+    msg += `${icon} ${ind.name}: ${ind.reason}\n`;
+  }
+  msg += `\n**Reasoning:**\n`;
+  for (const r of data.reasoning) {
+    msg += `• ${r.replace(/\[(BUY|SELL|HOLD)\]\s*/, '')}\n`;
+  }
+  msg += `\n⚠️ *This is algorithmic analysis for educational purposes only. Not financial advice.*`;
+  return msg;
+}
+
 export default function AssistantPage() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: 'Welcome to NEPSE Smart Assistant! I can help you with stock analysis, trading signals, and market insights. Try asking me about a specific stock or trading strategy.',
+      content: 'Welcome to NEPSE Smart Assistant! I analyze stocks using real market data. Try asking about a specific stock or trading strategy.',
     },
   ]);
   const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSend = () => {
-    if (!input.trim()) return;
-
-    const userMessage: Message = { role: 'user', content: input };
-    setMessages((prev) => [...prev, userMessage]);
-
-    // Simulated response
-    const symbolMatch = input.match(/\b([A-Z]{2,10})\b/);
-    let response: Message;
-
-    if (symbolMatch) {
-      const symbol = symbolMatch[1];
-      response = {
-        role: 'assistant',
-        content: `**${symbol} Analysis:**\n\n` +
-          `📊 **Signal: BUY** (Confidence: 72.5%)\n` +
-          `📈 Score: 68.3/100 | Risk: MEDIUM\n\n` +
-          `**Key Indicators:**\n` +
-          `• RSI (14): 42.5 — Approaching oversold\n` +
-          `• MACD: Bullish crossover confirmed\n` +
-          `• SMA 20/50: Golden cross active\n` +
-          `• Volume: 1.8x above average\n\n` +
-          `**Support:** Rs. 1,120 | **Resistance:** Rs. 1,180\n\n` +
-          `**Recommendation:** Consider accumulating in small quantities with stop-loss at Rs. 1,100.\n\n` +
-          `⚠️ *This is not financial advice. Always do your own research.*`,
-      };
-    } else if (input.toLowerCase().includes('swing') || input.toLowerCase().includes('best')) {
-      response = {
-        role: 'assistant',
-        content: `**Top Swing Trading Candidates:**\n\n` +
-          `1. **UPPER** — Score: 78, BUY (75% confidence)\n` +
-          `2. **CHCL** — Score: 72, BUY (68% confidence)\n` +
-          `3. **SHIVM** — Score: 70, BUY (65% confidence)\n` +
-          `4. **SBL** — Score: 68, BUY (62% confidence)\n` +
-          `5. **NABIL** — Score: 65, BUY (60% confidence)\n\n` +
-          `These stocks show strong momentum with volume confirmation. Consider your risk tolerance and portfolio allocation.\n\n` +
-          `⚠️ *These picks are system-generated for educational purposes only.*`,
-      };
-    } else if (input.toLowerCase().includes('sentiment') || input.toLowerCase().includes('market')) {
-      response = {
-        role: 'assistant',
-        content: `**Market Sentiment Analysis:**\n\n` +
-          `📊 Overall: **SLIGHTLY BULLISH**\n\n` +
-          `• Positive news: 3 articles\n` +
-          `• Negative news: 2 articles\n` +
-          `• Neutral news: 1 article\n\n` +
-          `**Key Highlights:**\n` +
-          `• Banking sector showing strong earnings growth\n` +
-          `• Hydropower sector benefiting from favorable conditions\n` +
-          `• NRB monetary policy tightening creating some headwinds\n\n` +
-          `NEPSE Index: 2,285.50 (+0.67%)`,
-      };
-    } else {
-      response = {
-        role: 'assistant',
-        content: `I can help you with:\n\n` +
-          `• **Stock Analysis**: "Should I buy NABIL?" or "Analyze NICA"\n` +
-          `• **Trading Picks**: "Best stock for swing trading?"\n` +
-          `• **Market Overview**: "What is the market sentiment?"\n` +
-          `• **Breakout Stocks**: "Show breakout stocks"\n\n` +
-          `Try asking me one of these questions!`,
-      };
-    }
-
-    setTimeout(() => {
-      setMessages((prev) => [...prev, response]);
-    }, 500);
-
+  const handleSend = useCallback(async () => {
+    if (!input.trim() || loading) return;
+    const userText = input.trim();
     setInput('');
-  };
+
+    const userMessage: Message = { role: 'user', content: userText };
+    setMessages((prev) => [...prev, userMessage]);
+    setLoading(true);
+
+    try {
+      // Extract stock symbol from query
+      const symbolMatch = userText.match(/\b([A-Z]{2,10})\b/);
+      const lowerText = userText.toLowerCase();
+
+      if (symbolMatch && (lowerText.includes('buy') || lowerText.includes('sell') || lowerText.includes('analyze') || lowerText.includes('signal'))) {
+        const symbol = symbolMatch[1];
+        try {
+          const data = await fetchSignal(symbol);
+          const content = formatSignalResponse(data);
+          setMessages((prev) => [...prev, { role: 'assistant', content }]);
+        } catch {
+          setMessages((prev) => [...prev, {
+            role: 'assistant',
+            content: `Could not fetch live data for **${symbol}**. The market may be closed or data is unavailable.\n\nNEPSE trading hours: Sun-Thu 11:00-15:00 NPT. Try again during market hours for live analysis.`,
+          }]);
+        }
+      } else if (lowerText.includes('swing') || lowerText.includes('best')) {
+        try {
+          const data = await fetchScan('swing');
+          if (data.results.length > 0) {
+            let msg = `**Top Swing Trading Candidates** (${data.count} matches):\n\n`;
+            data.results.slice(0, 5).forEach((r, i) => {
+              msg += `${i + 1}. **${r.symbol}** — Rs. ${r.price.toLocaleString()} (${r.changePercent > 0 ? '+' : ''}${r.changePercent}%) | Score: ${r.score} | ${r.details.trend}\n`;
+            });
+            msg += `\n⚠️ *System-generated picks based on live data. Not financial advice.*`;
+            setMessages((prev) => [...prev, { role: 'assistant', content: msg }]);
+          } else {
+            setMessages((prev) => [...prev, { role: 'assistant', content: 'No swing trading candidates found. The market may be closed — try during trading hours (Sun-Thu 11:00-15:00 NPT).' }]);
+          }
+        } catch {
+          setMessages((prev) => [...prev, { role: 'assistant', content: 'Could not scan the market. Try again during trading hours.' }]);
+        }
+      } else if (lowerText.includes('breakout')) {
+        try {
+          const data = await fetchScan('breakout');
+          if (data.results.length > 0) {
+            let msg = `**Breakout Scanner Results** (${data.count} stocks):\n\n`;
+            data.results.slice(0, 5).forEach((r, i) => {
+              msg += `${i + 1}. **${r.symbol}** — Rs. ${r.price.toLocaleString()} (+${r.changePercent}%) | Volume: ${r.details.volume.toLocaleString()}\n`;
+            });
+            msg += `\n⚠️ *Breakout detection based on live data. Not financial advice.*`;
+            setMessages((prev) => [...prev, { role: 'assistant', content: msg }]);
+          } else {
+            setMessages((prev) => [...prev, { role: 'assistant', content: 'No breakout stocks detected right now. Market may be closed.' }]);
+          }
+        } catch {
+          setMessages((prev) => [...prev, { role: 'assistant', content: 'Could not scan for breakouts. Try again during market hours.' }]);
+        }
+      } else if (lowerText.includes('sentiment') || lowerText.includes('market')) {
+        setMessages((prev) => [...prev, {
+          role: 'assistant',
+          content: `**Market Sentiment Analysis:**\n\nSentiment data requires real-time news feed integration. Currently, you can check:\n\n• **Dashboard** — Live NEPSE index, top gainers/losers, volume leaders\n• **Scanner** — Run swing, breakout, and accumulation scans\n• **Signals** — Generate signals for specific stocks\n\nNEPSE trading hours: Sun-Thu 11:00-15:00 NPT`,
+        }]);
+      } else if (symbolMatch) {
+        // Just a symbol mentioned without specific action
+        try {
+          const data = await fetchSignal(symbolMatch[1]);
+          const content = formatSignalResponse(data);
+          setMessages((prev) => [...prev, { role: 'assistant', content }]);
+        } catch {
+          setMessages((prev) => [...prev, {
+            role: 'assistant',
+            content: `Could not fetch data for **${symbolMatch[1]}**. Market may be closed.\n\nTry during NEPSE trading hours: Sun-Thu 11:00-15:00 NPT.`,
+          }]);
+        }
+      } else {
+        setMessages((prev) => [...prev, {
+          role: 'assistant',
+          content: `I can help you with:\n\n• **Stock Analysis**: "Should I buy NABIL?" or "Analyze NICA"\n• **Trading Picks**: "Best stock for swing trading?"\n• **Breakout Stocks**: "Show breakout stocks"\n• **Market Overview**: "What is the market sentiment?"\n\nMention a stock symbol (e.g., NABIL, UPPER, NICA) and I'll fetch live data and generate a signal.`,
+        }]);
+      }
+    } catch {
+      setMessages((prev) => [...prev, { role: 'assistant', content: 'An error occurred. Please try again.' }]);
+    } finally {
+      setLoading(false);
+    }
+  }, [input, loading]);
 
   return (
     <div className="max-w-4xl mx-auto space-y-4">
@@ -127,26 +163,32 @@ export default function AssistantPage() {
               </div>
             </div>
           ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-dark-bg border border-dark-border text-gray-400 p-3 rounded-xl text-sm animate-pulse">
+                Analyzing...
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Input */}
-        <div className="p-4 border-t border-dark-border">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Ask about a stock, strategy, or market..."
-              className="flex-1 bg-dark-bg border border-dark-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-primary-500"
-            />
-            <button
-              onClick={handleSend}
-              className="bg-primary-600 hover:bg-primary-700 text-white px-6 py-2 rounded-lg text-sm font-medium"
-            >
-              Send
-            </button>
-          </div>
+        <div className="border-t border-dark-border p-4 flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+            placeholder="Ask about a stock or trading strategy..."
+            className="flex-1 bg-dark-bg border border-dark-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-primary-500"
+            disabled={loading}
+          />
+          <button
+            onClick={handleSend}
+            disabled={loading}
+            className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white px-6 py-2 rounded-lg text-sm font-medium"
+          >
+            {loading ? '...' : 'Send'}
+          </button>
         </div>
       </div>
     </div>

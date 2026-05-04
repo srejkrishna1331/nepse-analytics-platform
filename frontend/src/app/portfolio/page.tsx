@@ -1,12 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo } from 'react';
+import { useMarketWebSocket } from '@/hooks/useMarketWebSocket';
 
-const HOLDINGS = [
-  { symbol: 'NABIL', name: 'Nabil Bank Limited', sector: 'Commercial Banks', qty: 100, avgPrice: 1050, currentPrice: 1150, invested: 105000, currentValue: 115000, pl: 10000, plPct: 9.52 },
-  { symbol: 'NICA', name: 'NIC Asia Bank Limited', sector: 'Commercial Banks', qty: 200, avgPrice: 880, currentPrice: 930, invested: 176000, currentValue: 186000, pl: 10000, plPct: 5.68 },
-  { symbol: 'UPPER', name: 'Upper Tamakoshi', sector: 'Hydro Power', qty: 150, avgPrice: 450, currentPrice: 490, invested: 67500, currentValue: 73500, pl: 6000, plPct: 8.89 },
-  { symbol: 'NLIC', name: 'Nepal Life Insurance', sector: 'Life Insurance', qty: 50, avgPrice: 850, currentPrice: 820, invested: 42500, currentValue: 41000, pl: -1500, plPct: -3.53 },
+interface Holding {
+  symbol: string;
+  name: string;
+  sector: string;
+  qty: number;
+  avgPrice: number;
+  currentPrice: number;
+}
+
+const STATIC_HOLDINGS: Holding[] = [
+  { symbol: 'NABIL', name: 'Nabil Bank Limited', sector: 'Commercial Banks', qty: 100, avgPrice: 1050, currentPrice: 1150 },
+  { symbol: 'NICA', name: 'NIC Asia Bank Limited', sector: 'Commercial Banks', qty: 200, avgPrice: 880, currentPrice: 930 },
+  { symbol: 'UPPER', name: 'Upper Tamakoshi', sector: 'Hydro Power', qty: 150, avgPrice: 450, currentPrice: 490 },
+  { symbol: 'NLIC', name: 'Nepal Life Insurance', sector: 'Life Insurance', qty: 50, avgPrice: 850, currentPrice: 820 },
 ];
 
 const TRANSACTIONS = [
@@ -21,17 +31,47 @@ function formatCurrency(n: number): string {
 }
 
 export default function PortfolioPage() {
-  const totalInvested = HOLDINGS.reduce((s, h) => s + h.invested, 0);
-  const totalCurrent = HOLDINGS.reduce((s, h) => s + h.currentValue, 0);
+  const ws = useMarketWebSocket();
+
+  // Merge live prices into holdings
+  const holdings = useMemo(() => {
+    return STATIC_HOLDINGS.map((h) => {
+      let livePrice = h.currentPrice;
+      if (ws.stocks && ws.stocks.data.length > 0) {
+        const liveStock = ws.stocks.data.find((s) => s.symbol === h.symbol);
+        if (liveStock && liveStock.close > 0) {
+          livePrice = liveStock.close;
+        }
+      }
+      const invested = h.qty * h.avgPrice;
+      const currentValue = h.qty * livePrice;
+      const pl = currentValue - invested;
+      const plPct = invested > 0 ? (pl / invested) * 100 : 0;
+      return { ...h, currentPrice: livePrice, invested, currentValue, pl, plPct };
+    });
+  }, [ws.stocks]);
+
+  const totalInvested = holdings.reduce((s, h) => s + h.invested, 0);
+  const totalCurrent = holdings.reduce((s, h) => s + h.currentValue, 0);
   const totalPL = totalCurrent - totalInvested;
-  const totalPLPct = (totalPL / totalInvested) * 100;
+  const totalPLPct = totalInvested > 0 ? (totalPL / totalInvested) * 100 : 0;
 
   const sectors: Record<string, number> = {};
-  HOLDINGS.forEach(h => { sectors[h.sector] = (sectors[h.sector] || 0) + h.currentValue; });
+  holdings.forEach(h => { sectors[h.sector] = (sectors[h.sector] || 0) + h.currentValue; });
+
+  const isLive = ws.isLive;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Portfolio</h1>
+      <div className="flex items-center gap-4">
+        <h1 className="text-2xl font-bold">Portfolio</h1>
+        {isLive && (
+          <span className="flex items-center gap-1 text-xs text-green-400">
+            <span className={`w-2 h-2 rounded-full ${ws.isWsConnected ? 'bg-green-400' : 'bg-yellow-400'} animate-pulse`} />
+            {ws.isWsConnected ? 'Live (WebSocket)' : 'Live (Polling)'}
+          </span>
+        )}
+      </div>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -74,7 +114,7 @@ export default function PortfolioPage() {
                 </tr>
               </thead>
               <tbody>
-                {HOLDINGS.map((h) => (
+                {holdings.map((h) => (
                   <tr key={h.symbol} className="border-b border-dark-border/30 hover:bg-dark-border/20">
                     <td className="py-2 px-3">
                       <div className="font-bold text-primary-400">{h.symbol}</div>
@@ -100,13 +140,13 @@ export default function PortfolioPage() {
         <div className="bg-dark-card border border-dark-border rounded-xl p-4">
           <h3 className="text-lg font-semibold mb-4">Sector Allocation</h3>
           <div className="space-y-3">
-            {Object.entries(sectors).map(([sector, value]) => {
+            {Object.entries(sectors).sort((a, b) => b[1] - a[1]).map(([sector, value]) => {
               const pct = (value / totalCurrent) * 100;
               return (
                 <div key={sector}>
                   <div className="flex justify-between text-sm mb-1">
                     <span className="text-gray-400">{sector}</span>
-                    <span className="font-semibold">{pct.toFixed(1)}%</span>
+                    <span>{pct.toFixed(1)}%</span>
                   </div>
                   <div className="w-full bg-dark-border rounded-full h-2">
                     <div className="bg-primary-500 h-2 rounded-full" style={{ width: `${pct}%` }} />
@@ -115,48 +155,40 @@ export default function PortfolioPage() {
               );
             })}
           </div>
-
-          <div className="mt-6 p-3 rounded-lg bg-dark-bg border border-dark-border/50">
-            <div className="text-xs text-gray-400 mb-1">Risk Assessment</div>
-            <div className="text-yellow-400 font-semibold">MEDIUM RISK</div>
-            <div className="text-xs text-gray-500 mt-1">72.5% concentration in banking sector</div>
-          </div>
         </div>
       </div>
 
       {/* Recent Transactions */}
       <div className="bg-dark-card border border-dark-border rounded-xl p-4">
         <h3 className="text-lg font-semibold mb-4">Recent Transactions</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-gray-400 border-b border-dark-border">
-                <th className="text-left py-2 px-3">Date</th>
-                <th className="text-left py-2 px-3">Symbol</th>
-                <th className="text-left py-2 px-3">Type</th>
-                <th className="text-right py-2 px-3">Qty</th>
-                <th className="text-right py-2 px-3">Price</th>
-                <th className="text-right py-2 px-3">Amount</th>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-gray-400 border-b border-dark-border">
+              <th className="text-left py-2 px-3">Date</th>
+              <th className="text-left py-2 px-3">Symbol</th>
+              <th className="text-center py-2 px-3">Type</th>
+              <th className="text-right py-2 px-3">Qty</th>
+              <th className="text-right py-2 px-3">Price</th>
+              <th className="text-right py-2 px-3">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {TRANSACTIONS.map((t, i) => (
+              <tr key={i} className="border-b border-dark-border/30">
+                <td className="py-2 px-3 text-gray-400">{t.date}</td>
+                <td className="py-2 px-3 font-bold text-primary-400">{t.symbol}</td>
+                <td className="py-2 px-3 text-center">
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${t.type === 'BUY' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
+                    {t.type}
+                  </span>
+                </td>
+                <td className="py-2 px-3 text-right">{t.qty}</td>
+                <td className="py-2 px-3 text-right">{t.price.toFixed(2)}</td>
+                <td className="py-2 px-3 text-right">{formatCurrency(t.amount)}</td>
               </tr>
-            </thead>
-            <tbody>
-              {TRANSACTIONS.map((t, i) => (
-                <tr key={i} className="border-b border-dark-border/30">
-                  <td className="py-2 px-3 text-gray-400">{t.date}</td>
-                  <td className="py-2 px-3 font-semibold text-primary-400">{t.symbol}</td>
-                  <td className="py-2 px-3">
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${t.type === 'BUY' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
-                      {t.type}
-                    </span>
-                  </td>
-                  <td className="py-2 px-3 text-right">{t.qty}</td>
-                  <td className="py-2 px-3 text-right">{t.price.toFixed(2)}</td>
-                  <td className="py-2 px-3 text-right font-semibold">{formatCurrency(t.amount)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

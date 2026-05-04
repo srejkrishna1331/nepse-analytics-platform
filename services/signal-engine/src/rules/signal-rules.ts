@@ -23,20 +23,26 @@ export function evaluateRSI(rsiValue: number): IndicatorSignal {
   let signal: SignalType = 'HOLD';
   let reason = '';
 
-  if (rsiValue < 30) {
+  if (rsiValue < 25) {
     signal = 'BUY';
-    reason = `RSI at ${rsiValue.toFixed(1)} indicates oversold condition`;
+    reason = `RSI at ${rsiValue.toFixed(1)} — deeply oversold, strong reversal likely`;
+  } else if (rsiValue < 30) {
+    signal = 'BUY';
+    reason = `RSI at ${rsiValue.toFixed(1)} — oversold condition`;
   } else if (rsiValue < 40) {
-    signal = 'BUY';
-    reason = `RSI at ${rsiValue.toFixed(1)} approaching oversold`;
+    signal = 'HOLD';
+    reason = `RSI at ${rsiValue.toFixed(1)} — approaching oversold but not yet actionable`;
+  } else if (rsiValue > 80) {
+    signal = 'SELL';
+    reason = `RSI at ${rsiValue.toFixed(1)} — extremely overbought, reversal likely`;
   } else if (rsiValue > 70) {
     signal = 'SELL';
-    reason = `RSI at ${rsiValue.toFixed(1)} indicates overbought condition`;
-  } else if (rsiValue > 60) {
-    signal = 'SELL';
-    reason = `RSI at ${rsiValue.toFixed(1)} approaching overbought`;
+    reason = `RSI at ${rsiValue.toFixed(1)} — overbought condition`;
+  } else if (rsiValue > 65) {
+    signal = 'HOLD';
+    reason = `RSI at ${rsiValue.toFixed(1)} — elevated but not overbought`;
   } else {
-    reason = `RSI at ${rsiValue.toFixed(1)} is neutral`;
+    reason = `RSI at ${rsiValue.toFixed(1)} — neutral zone`;
   }
 
   return { name: 'RSI', value: rsiValue, signal, weight: WEIGHTS.RSI, reason };
@@ -133,7 +139,7 @@ export function evaluateVolume(
 ): IndicatorSignal {
   let signal: SignalType = 'HOLD';
   let reason = '';
-  const volumeRatio = currentVolume / avgVolume;
+  const volumeRatio = avgVolume > 0 ? currentVolume / avgVolume : 1;
 
   if (volumeRatio > 2 && priceChange > 0) {
     signal = 'BUY';

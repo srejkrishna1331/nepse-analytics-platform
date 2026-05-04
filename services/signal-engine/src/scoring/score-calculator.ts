@@ -56,8 +56,11 @@ export function calculateSignalScore(indicators: IndicatorSignal[]): SignalOutpu
     signal = 'HOLD';
   }
 
-  // Calculate confidence
-  const confidence = Math.min(100, Math.abs(netScore) + 20);
+  // Calculate confidence — scaled so weak signals get low confidence
+  const absNet = Math.abs(netScore);
+  const confidence = absNet <= 10
+    ? absNet * 2                           // 0-20% for very weak
+    : Math.min(100, 20 + (absNet - 10) * 1.2); // scales 20-100%
 
   // Determine risk level
   const riskLevel = calculateRiskLevel(indicators, confidence);

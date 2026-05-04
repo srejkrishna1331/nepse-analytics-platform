@@ -143,6 +143,67 @@ async function fetchWithRetry<T>(
 }
 
 // ---------------------------------------------------------------------------
+// NEPSE Sector mapping (common NEPSE stocks → sector names)
+// ---------------------------------------------------------------------------
+
+const SECTOR_MAP: Record<string, string> = {
+  // Commercial Banks
+  NABIL: 'Commercial Banks', NICA: 'Commercial Banks', GBIME: 'Commercial Banks',
+  SBL: 'Commercial Banks', HBL: 'Commercial Banks', EBL: 'Commercial Banks',
+  KBL: 'Commercial Banks', MEGA: 'Commercial Banks', CZBIL: 'Commercial Banks',
+  PCBL: 'Commercial Banks', NBL: 'Commercial Banks', PRVU: 'Commercial Banks',
+  SANIMA: 'Commercial Banks', ADBL: 'Commercial Banks', SCB: 'Commercial Banks',
+  SBI: 'Commercial Banks', NBBL: 'Commercial Banks', MBL: 'Commercial Banks',
+  SRBL: 'Commercial Banks', BOKL: 'Commercial Banks', CCBL: 'Commercial Banks',
+  LBBL: 'Commercial Banks', NMB: 'Commercial Banks', NIMB: 'Commercial Banks',
+  LSL: 'Commercial Banks', CBL: 'Commercial Banks',
+  // Development Banks
+  GBBL: 'Development Banks', EDBL: 'Development Banks', MLBL: 'Development Banks',
+  MDB: 'Development Banks', SAPDBL: 'Development Banks', KSBBL: 'Development Banks',
+  SHBL: 'Development Banks', JBBL: 'Development Banks', LBBD: 'Development Banks',
+  KRBL: 'Development Banks', MNBBL: 'Development Banks', SADBL: 'Development Banks',
+  GDBL: 'Development Banks', CORBL: 'Development Banks', NABBC: 'Development Banks',
+  // Hydro Power
+  UPPER: 'Hydro Power', CHCL: 'Hydro Power', NHPC: 'Hydro Power',
+  BPCL: 'Hydro Power', AKJCL: 'Hydro Power', API: 'Hydro Power',
+  SHPC: 'Hydro Power', RURU: 'Hydro Power', SJCL: 'Hydro Power',
+  HURJA: 'Hydro Power', MBJC: 'Hydro Power', DHPL: 'Hydro Power',
+  HDHPC: 'Hydro Power', RADHI: 'Hydro Power', NGPL: 'Hydro Power',
+  UNHPL: 'Hydro Power', UMRH: 'Hydro Power', GHL: 'Hydro Power',
+  SSHL: 'Hydro Power', MKJC: 'Hydro Power', KPCL: 'Hydro Power',
+  AHPC: 'Hydro Power', MHNL: 'Hydro Power', PPCL: 'Hydro Power',
+  UMHL: 'Hydro Power', NYADI: 'Hydro Power', RIDI: 'Hydro Power',
+  SPC: 'Hydro Power', SPDL: 'Hydro Power', TPC: 'Hydro Power',
+  // Life Insurance
+  NLIC: 'Life Insurance', LICN: 'Life Insurance', ALICL: 'Life Insurance',
+  SLICL: 'Life Insurance', NLICL: 'Life Insurance', GLICL: 'Life Insurance',
+  RLICL: 'Life Insurance', SJLIC: 'Life Insurance', SNLICL: 'Life Insurance',
+  PMLI: 'Life Insurance', JBLI: 'Life Insurance', MLICL: 'Life Insurance',
+  // Non-Life Insurance
+  SICL: 'Non Life Insurance', NIL: 'Non Life Insurance', HGI: 'Non Life Insurance',
+  PRIN: 'Non Life Insurance', IGI: 'Non Life Insurance', PIC: 'Non Life Insurance',
+  NLG: 'Non Life Insurance', AIL: 'Non Life Insurance', LGIL: 'Non Life Insurance',
+  SGIC: 'Non Life Insurance', SIL: 'Non Life Insurance', PICL: 'Non Life Insurance',
+  // Microfinance
+  CBBL: 'Microfinance', DDBL: 'Microfinance', SMFDB: 'Microfinance',
+  SWBBL: 'Microfinance', GBLBS: 'Microfinance', MLBBL: 'Microfinance',
+  NMBMF: 'Microfinance', NMFBS: 'Microfinance', MFIL: 'Microfinance',
+  SMFBS: 'Microfinance', SKBBL: 'Microfinance', LLBS: 'Microfinance',
+  JALPA: 'Microfinance', GILB: 'Microfinance', RSDC: 'Microfinance',
+  // Manufacturing & Processing
+  SHIVM: 'Manufacturing', UNL: 'Manufacturing', BNT: 'Manufacturing',
+  HDL: 'Manufacturing', GCIL: 'Manufacturing', JSM: 'Manufacturing',
+  // Hotels & Tourism
+  TRH: 'Hotels', SHL: 'Hotels', OHL: 'Hotels', CGH: 'Hotels',
+  // Telecom & Others
+  NTC: 'Others', CIT: 'Others', STC: 'Others',
+};
+
+function sectorForSymbol(symbol: string): string {
+  return SECTOR_MAP[symbol?.trim()] ?? 'Others';
+}
+
+// ---------------------------------------------------------------------------
 // Bridge stock → RawNepseSecurity mapper
 // ---------------------------------------------------------------------------
 
@@ -341,7 +402,7 @@ export function normalizeStock(raw: RawNepseSecurity): NormalizedStock {
   return {
     symbol: raw.symbol?.trim() ?? '',
     name: raw.securityName?.trim() ?? raw.symbol ?? '',
-    sector: raw.sectorName?.trim() ?? 'Unknown',
+    sector: raw.sectorName?.trim() || sectorForSymbol(raw.symbol),
     open: raw.openPrice ?? 0,
     high: raw.highPrice ?? 0,
     low: raw.lowPrice ?? 0,
